@@ -31,3 +31,9 @@ DATE_PARSE_THRESHOLD = 0.7
 
 # Export constants
 EXPORT_DATE_FORMAT = "%Y%m%d_%H%M"
+
+# Concurrency / parallelism guard
+# HF Spaces typically has limited CPU and process forking can exhaust workers.
+import os
+N_JOBS = 1 if os.environ.get("SPACE_ID") else -1
+

@@ -1,21 +1,28 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import logging
 from datetime import datetime
 from io import StringIO
 import requests
 import base64
 
+# Import centralized logging
+from logging_config import setup_logging
+setup_logging()
+import logging
+logger = logging.getLogger(__name__)
+
 # Import custom modules — ONLY the final, harmonized ones
 from config import *
-from theme import LIGHT, DARK
 
+# Import core components
+from core.dataset_context import DatasetContext
 
-# Always import from the utils PACKAGE (utils/) to avoid conflicts with the top-level utils.py
+# Import services
+from services.health_service import calculate_data_health_score
+from services.chart_service import MAX_ROWS_FOR_PLOT
 from utils.ui_utils import reset_app, create_kpis
 from utils.data_utils import get_filtered_data
-from utils.health_utils import calculate_data_health_score
 
 from state import SESSION_DEFAULTS
 
@@ -34,6 +41,20 @@ SUPPORTED_PROVIDERS = {
         "models": ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-1.0-pro"]
     }
 }
+
+# =============== STARTUP HEALTH CHECK =================
+def _check_imports():
+    errors = []
+    for module in ['pandas', 'numpy', 'plotly', 'sklearn', 'duckdb']:
+        try:
+            __import__(module)
+        except ImportError as e:
+            errors.append(f"{module}: {str(e)}")
+    if errors:
+        st.error(f"Missing packages: {', '.join(errors)}. Check requirements.txt.")
+        st.stop()
+
+_check_imports()
 
 # =============== PAGE CONFIG =================
 st.set_page_config(
@@ -61,14 +82,9 @@ from state import init_session
 # Initialize session state
 init_session()
 
-# Apply theme function
-def apply_theme():
-    from theme import LIGHT, DARK
-    css = LIGHT if st.session_state.theme == "light" else DARK
-    st.markdown(css, unsafe_allow_html=True)
-
-# Apply the appropriate theme based on user preference
-apply_theme()
+# Inject modern theme CSS (responds to st.session_state.theme = light/dark)
+import theme
+theme.inject_css()
 
 for key, default_value in SESSION_DEFAULTS.items():
     if key not in st.session_state:
@@ -102,6 +118,22 @@ def lazy_load_tab(tab_name):
         def error_tab(*args, **kwargs):
             st.error(f"Failed to load {tab_name} tab. Please refresh the app.")
         return error_tab
+
+
+# =============== FILE UPLOAD CACHING =================
+@st.cache_data(show_spinner=False)
+def _load_uploaded_file(file_id: str, file_bytes: bytes, filename: str) -> pd.DataFrame:
+    """Cache loaded files to prevent re-reading on every rerun."""
+    from io import BytesIO
+    buf = BytesIO(file_bytes)
+    if filename.endswith(".csv"):
+        return pd.read_csv(buf)
+    elif filename.endswith((".xlsx", ".xls")):
+        return pd.read_excel(buf)
+    elif filename.endswith(".json"):
+        return pd.read_json(buf)
+    else:
+        raise ValueError(f"Unsupported file type: {filename}")
 
 
 # =============== SIDEBAR ===============
@@ -148,18 +180,10 @@ with st.sidebar:
             for f in files:
                 nm = f.name
                 try:
-                    if nm.lower().endswith(".csv"):
-                        uploaded_map[nm] = pd.read_csv(f)
-                    elif nm.lower().endswith((".xlsx", ".xls")):
-                        xls = pd.ExcelFile(f)
-                        for sh in xls.sheet_names:
-                            uploaded_map[f"{nm} :: {sh}"] = pd.read_excel(f, sheet_name=sh)
-                    elif nm.lower().endswith(".json"):
-                        try:
-                            uploaded_map[nm] = pd.read_json(f)
-                        except ValueError:
-                            f.seek(0)
-                            uploaded_map[nm] = pd.read_json(f, lines=True)
+                    # Use caching to prevent re-reading the file
+                    bytes_data = f.read()
+                    df = _load_uploaded_file(f.file_id, bytes_data, f.name)
+                    uploaded_map[nm] = df
                 except Exception as e:
                     st.error(f"{nm}: {e}")
 
@@ -338,12 +362,16 @@ if not st.session_state.data_loaded or st.session_state.work_df is None:
     st.info("📥 Load a dataset from the sidebar to begin. CSV/Excel/JSON/API/HTML tables all supported.")
     st.stop()
 
-# =============== GLOBAL FILTERS ===============
-filtered = get_filtered_data()
+# =============== GLOBAL FILTERS AND DATASET CONTEXT ===============
+# Create a DatasetContext object for consistent data handling
+dataset_context = DatasetContext(
+    base_df=st.session_state.work_df,
+    filter_params={}  # We can extend this to support more complex filtering later
+)
 
 # =============== KPIs ===============
 with st.container():
-    create_kpis(filtered)
+    create_kpis(dataset_context.filtered_df)
 
 # =============== TABS ===============
 tabs = st.tabs([
@@ -352,7 +380,8 @@ tabs = st.tabs([
     "📊 Charts & Pivot",
     "🤖 Chatbot",
     "⚙️ Make a Model",
-     "📥 Export"     
+    "📥 Export",
+    "🔍 SQL",
 ])
 
 # ---------- LAZY LOADING OF TABS ----------
@@ -361,29 +390,35 @@ tabs = st.tabs([
 # NEW — Single Review Tab
 with tabs[0]:
     render_func = lazy_load_tab("review")
-    render_func(filtered)
+    render_func(dataset_context)
 
 # NEW — Unified Cleaning Tab
 with tabs[1]:
     render_func = lazy_load_tab("cleaning")
-    render_func()
+    render_func(dataset_context)
 
 # NEW — Unified Charts & Pivot Tab
 with tabs[2]:
     render_func = lazy_load_tab("charts")
-    render_func(filtered)
+    render_func(dataset_context)
 
 # ---------- CHATBOT ----------
 with tabs[3]:
     render_func = lazy_load_tab("chatbot")
-    render_func(filtered)
+    render_func(dataset_context.filtered_df)
+
 
 # ---------- MAKE A MODEL ----------
 with tabs[4]:
     render_func = lazy_load_tab("make_a_model")
-    render_func(filtered)
+    render_func(dataset_context)
     
 # ---------- EXPORT ----------
 with tabs[5]:
     render_func = lazy_load_tab("export")
-    render_func(filtered)
+    render_func(dataset_context)
+
+# ---------- SQL ----------
+with tabs[6]:
+    from tabs.sql_query import render_sql_tab
+    render_sql_tab(dataset_context)

@@ -1,0 +1,77 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# C extensions
+*.o
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Jupyter
+.ipynb_checkpoints
+
+# Environment variables
+.env
+.env.local
+.env.prod
+
+# Data files (untracked by default)
+*.csv
+*.xlsx
+*.xls
+*.json
+*.parquet
+*.h5
+*.pkl
+*.joblib
+
+# Streamlit cache
+.streamlit/
+
+# Custom cache directories
+.cache/
+__pycache__/
+
+# Large model files
+*.bin
+*.pt
+*.pth
+*.ckpt

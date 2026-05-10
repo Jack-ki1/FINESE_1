@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from typing import Optional
-from utils import log_change
+from utils.ui_utils import log_change
 
 class DataStore:
     @staticmethod
